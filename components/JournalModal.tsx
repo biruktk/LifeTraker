@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { JournalEntry, AppData } from '../types';
 import { generateJournalFromDay, continueJournalEntry } from '../services/geminiService';
 import { uploadFile } from '../services/imageService';
@@ -28,6 +28,7 @@ const JournalModal: React.FC<JournalModalProps> = ({ isOpen, onClose, date, data
   const [isGenerating, setIsGenerating] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const MOODS: { label: 'Happy' | 'Neutral' | 'Sad' | 'Productive' | 'Tired', icon: string, color: string }[] = [
     { label: 'Happy', icon: '😄', color: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/50' },
@@ -114,23 +115,32 @@ const JournalModal: React.FC<JournalModalProps> = ({ isOpen, onClose, date, data
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-          setIsUploading(true);
-          try {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      setIsUploading(true);
+      const uploadedUrls: string[] = [];
+
+      try {
+          // Loop through all selected files
+          for (let i = 0; i < files.length; i++) {
+              const file = files[i];
               const url = await uploadFile(file, userId);
-              setImages([...images, url]);
-          } catch (e: any) {
-              let msg = "Failed to upload file.";
-              if (e.message === "RLS_POLICY_ERROR") {
-                  msg = "PERMISSION DENIED: You created the bucket, but you need to add a POLICY.\n\n1. Go to Supabase -> Storage -> Configuration\n2. Click 'New Policy' on the 'images' bucket\n3. Check INSERT/SELECT/UPDATE for 'Authenticated' and 'Anon' roles\n4. Save.";
-              }
-              if (window.confirm(`${msg}\n\nOpen Dashboard Instructions?`)) {
-                  window.open(SUPABASE_STORAGE_URL, '_blank');
-              }
-          } finally {
-              setIsUploading(false);
+              uploadedUrls.push(url);
           }
+          setImages(prev => [...prev, ...uploadedUrls]);
+      } catch (e: any) {
+          let msg = "Failed to upload one or more files.";
+          if (e.message === "RLS_POLICY_ERROR") {
+              msg = "PERMISSION DENIED: You created the bucket, but you need to add a POLICY.\n\n1. Go to Supabase -> Storage -> Configuration\n2. Click 'New Policy' on the 'images' bucket\n3. Check INSERT/SELECT/UPDATE for 'Authenticated' and 'Anon' roles\n4. Save.";
+          }
+          if (window.confirm(`${msg}\n\nOpen Dashboard Instructions?`)) {
+              window.open(SUPABASE_STORAGE_URL, '_blank');
+          }
+      } finally {
+          setIsUploading(false);
+          // Crucial: Reset input so the same file can be selected again if needed
+          if (fileInputRef.current) fileInputRef.current.value = '';
       }
   };
 
@@ -274,8 +284,16 @@ const JournalModal: React.FC<JournalModalProps> = ({ isOpen, onClose, date, data
                      ))}
                      
                      <label className="w-24 h-24 rounded-lg border-2 border-dashed border-emerald-500/30 flex flex-col items-center justify-center cursor-pointer hover:bg-emerald-500/10 transition-colors text-emerald-500/50 hover:text-emerald-400">
-                         {isUploading ? <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div> : <span className="text-[10px]">Add Image</span>}
-                         <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} disabled={isUploading} />
+                         {isUploading ? <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div> : <span className="text-[10px]">Add Images</span>}
+                         <input 
+                            ref={fileInputRef}
+                            type="file" 
+                            accept="image/*" 
+                            multiple 
+                            className="hidden" 
+                            onChange={handleImageUpload} 
+                            disabled={isUploading} 
+                        />
                      </label>
                  </div>
             </div>

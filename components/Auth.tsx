@@ -28,18 +28,33 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             await StorageService.login(formData.email, formData.password);
             onLogin();
         } else {
+            // Sign Up
             if (!formData.name) {
                 setError("Name is required");
                 setLoading(false);
                 return;
             }
-            await StorageService.signUp(formData.email, formData.password, formData.name);
-            setMsg("Account created! You can now log in.");
-            setIsLogin(true); // Switch to login view
+            try {
+                await StorageService.signUp(formData.email, formData.password, formData.name);
+                setMsg("Account created! You have been logged in automatically.");
+                onLogin();
+            } catch (signUpErr: any) {
+                if (signUpErr.message && signUpErr.message.includes("already registered")) {
+                    setError("⚠️ This email is already registered in Supabase Auth. Please switch to 'Log In'.");
+                    // Optional: automatically switch to login view
+                    // setIsLogin(true);
+                } else {
+                    throw signUpErr;
+                }
+            }
         }
     } catch (err: any) {
         console.error(err);
-        setError(err.message || "Authentication failed");
+        if (err.message === "Invalid login credentials") {
+            setError("❌ Wrong email or password. If you deleted your user in the database, you might still exist in Auth. Try resetting password or check Supabase Dashboard.");
+        } else {
+            setError(err.message || "Authentication failed");
+        }
     } finally {
         setLoading(false);
     }
@@ -51,7 +66,22 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
         
         <div className="text-center mb-8 mt-6">
             <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent mb-2">Life Tracker</h1>
-            <p className="text-emerald-400/60">Powered by Supabase</p>
+            <p className="text-emerald-400/60">Productivity OS</p>
+        </div>
+
+        <div className="flex bg-black/30 p-1 rounded-xl mb-6">
+            <button 
+                onClick={() => { setIsLogin(true); setError(''); }}
+                className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${isLogin ? 'bg-emerald-600 text-white shadow-lg' : 'text-emerald-400/50 hover:text-white'}`}
+            >
+                Log In
+            </button>
+            <button 
+                onClick={() => { setIsLogin(false); setError(''); }}
+                className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${!isLogin ? 'bg-emerald-600 text-white shadow-lg' : 'text-emerald-400/50 hover:text-white'}`}
+            >
+                Sign Up
+            </button>
         </div>
 
         <h2 className="text-xl font-bold text-white mb-6 text-center">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
@@ -93,7 +123,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                 />
             </div>
 
-            {error && <p className="text-red-400 text-sm text-center bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</p>}
+            {error && <p className="text-red-400 text-sm text-center bg-red-500/10 p-2 rounded-lg border border-red-500/20 whitespace-pre-wrap">{error}</p>}
 
             <button 
                 type="submit" 
@@ -103,11 +133,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                 {loading ? 'Processing...' : (isLogin ? 'Log In' : 'Sign Up')}
             </button>
         </form>
-
-        <div className="mt-6 text-center">
-            <button onClick={() => { setIsLogin(!isLogin); setError(''); setMsg(''); }} className="text-sm text-emerald-400 hover:text-white transition-colors">
-                {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Log In"}
-            </button>
+        
+        <div className="mt-8 text-center text-xs text-emerald-500/30">
+            <p>Admin? Log in with admin credentials to access panel.</p>
         </div>
 
       </div>

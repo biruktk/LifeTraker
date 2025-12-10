@@ -8,6 +8,7 @@ import VisionBoard from './components/VisionBoard';
 import SimpleChat from './components/SimpleChat';
 import SocialMediaManager from './components/SocialMediaManager';
 import Timeline from './components/Timeline';
+import AdminPanel from './components/AdminPanel'; // Import Admin Panel
 import { AppData, Todo, Habit, JournalEntry, Expense, SocialPost, VisionImage, SavedMessage } from './types';
 import { chatWithAI } from './services/geminiService';
 import { StorageService } from './services/storage';
@@ -21,7 +22,7 @@ declare global {
   }
 }
 
-type ViewState = 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE';
+type ViewState = 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE' | 'ADMIN';
 
 const App: React.FC = () => {
   const [session, setSession] = useState<any>(null);
@@ -336,6 +337,10 @@ const App: React.FC = () => {
                 messages={data.savedChat}
                 onUpdateMessages={updateSavedChat}
             />
+        )}
+        
+        {currentView === 'ADMIN' && (
+            <AdminPanel currentUserEmail={session.user.email} />
         )}
 
         {currentView === 'DASHBOARD' && (

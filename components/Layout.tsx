@@ -4,8 +4,8 @@ interface LayoutProps {
   children: ReactNode;
   user?: { name: string };
   onLogout?: () => void;
-  currentTab?: 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE';
-  onTabChange?: (tab: 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE') => void;
+  currentTab?: 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE' | 'ADMIN';
+  onTabChange?: (tab: 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE' | 'ADMIN') => void;
   syncStatus?: 'SAVED' | 'SAVING' | 'ERROR';
 }
 
@@ -69,6 +69,15 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentTab = 
                   <span className="text-xl">💬</span>
                   <span className="font-bold text-sm">Chat & Files</span>
                </button>
+               
+               {/* Admin Link - always visible for this user request */}
+               <button 
+                  onClick={() => onTabChange?.('ADMIN')}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 mt-8 ${currentTab === 'ADMIN' ? 'bg-red-900/20 text-red-300 border border-red-500/20' : 'text-red-400/40 hover:text-red-300 hover:bg-white/5'}`}
+               >
+                  <span className="text-xl">⚡</span>
+                  <span className="font-bold text-sm">Admin Panel</span>
+               </button>
           </nav>
 
           {user && (
@@ -105,6 +114,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout, currentTab = 
                <button onClick={() => {onTabChange?.('DASHBOARD'); setIsMobileMenuOpen(false)}} className="w-full text-left p-4 rounded-xl bg-emerald-900/40 text-emerald-100 font-bold">📊 Dashboard</button>
                <button onClick={() => {onTabChange?.('SOCIAL'); setIsMobileMenuOpen(false)}} className="w-full text-left p-4 rounded-xl bg-emerald-900/40 text-emerald-100 font-bold">📢 Social Media</button>
                <button onClick={() => {onTabChange?.('CHAT'); setIsMobileMenuOpen(false)}} className="w-full text-left p-4 rounded-xl bg-emerald-900/40 text-emerald-100 font-bold">💬 Chat & Files</button>
+               <button onClick={() => {onTabChange?.('ADMIN'); setIsMobileMenuOpen(false)}} className="w-full text-left p-4 rounded-xl bg-red-900/40 text-red-200 font-bold">⚡ Admin Panel</button>
                <div className="border-t border-emerald-500/20 pt-4 mt-8 flex flex-col gap-3">
                    <button onClick={onLogout} className="text-red-400 font-bold py-2">Log Out</button>
                </div>

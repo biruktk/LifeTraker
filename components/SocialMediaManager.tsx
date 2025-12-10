@@ -52,6 +52,7 @@ const SocialMediaManager: React.FC<SocialMediaManagerProps> = ({ queue, onUpdate
       reader.onloadend = () => setAttachedImage(reader.result as string);
       reader.readAsDataURL(file);
     }
+    e.target.value = '';
   };
 
   const togglePlatform = (id: string) => {

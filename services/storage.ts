@@ -106,6 +106,36 @@ export const StorageService = {
         }
     },
 
+    // --- ADMIN FUNCTIONS ---
+    // Note: These will only work if RLS is disabled OR a policy allows access
+    
+    getAllUsersData: async () => {
+        const { data, error } = await supabase
+            .from('user_data')
+            .select('*');
+        if (error) throw error;
+        return data;
+    },
+
+    adminDeleteUserData: async (userId: string) => {
+        const { error } = await supabase
+            .from('user_data')
+            .delete()
+            .eq('id', userId);
+        if (error) throw error;
+    },
+
+    adminUpdateUserData: async (userId: string, content: any) => {
+        const { error } = await supabase
+            .from('user_data')
+            .update({ 
+                content: content,
+                updated_at: new Date().toISOString() 
+            })
+            .eq('id', userId);
+        if (error) throw error;
+    },
+
     // --- IMPORT / EXPORT ---
     exportDatabase: async () => {
         const data = await StorageService.getUserData();

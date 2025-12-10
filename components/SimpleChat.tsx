@@ -35,6 +35,8 @@ const SimpleChat: React.FC<SimpleChatProps> = ({ userId, messages = [], onUpdate
           reader.onloadend = () => setAttachedImage(reader.result as string);
           reader.readAsDataURL(file);
       }
+      // Reset input immediately so same file can be selected again if cleared
+      e.target.value = '';
   };
 
   const toggleListening = () => {

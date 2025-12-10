@@ -85,52 +85,56 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId, images = [], onUpdate
 
     setIsUploading(true);
     const newImagesData: VisionImage[] = [];
+    let hasError = false;
 
     try {
       for (const file of files) {
         if (file.type.startsWith('image/')) {
-          // 1. Read file
-          const reader = new FileReader();
-          const dataUrl = await new Promise<string>((resolve) => {
-            reader.onload = (event) => resolve(event.target?.result as string);
-            reader.readAsDataURL(file);
-          });
+          try {
+              // 1. Read file
+              const reader = new FileReader();
+              const dataUrl = await new Promise<string>((resolve) => {
+                reader.onload = (event) => resolve(event.target?.result as string);
+                reader.readAsDataURL(file);
+              });
 
-          // 2. Compress locally
-          const compressed = await compressImage(dataUrl);
+              // 2. Compress locally
+              const compressed = await compressImage(dataUrl);
 
-          // 3. Convert to Blob for Upload
-          const blob = dataURLtoBlob(compressed.src);
+              // 3. Convert to Blob for Upload
+              const blob = dataURLtoBlob(compressed.src);
 
-          // 4. Upload to Supabase Storage (The "Folder")
-          const publicUrl = await uploadFile(blob, userId);
+              // 4. Upload to Supabase Storage (The "Folder")
+              const publicUrl = await uploadFile(blob, userId);
 
-          newImagesData.push({
-            id: Date.now() + Math.random(),
-            src: publicUrl, // Save URL, not base64
-            area: compressed.area,
-            aspectRatio: compressed.aspectRatio
-          });
+              newImagesData.push({
+                id: Date.now() + Math.random(),
+                src: publicUrl, // Save URL, not base64
+                area: compressed.area,
+                aspectRatio: compressed.aspectRatio
+              });
+          } catch (innerErr) {
+              console.error("Error uploading specific file:", innerErr);
+              hasError = true;
+          }
         }
       }
 
-      newImagesData.sort((a, b) => b.aspectRatio - a.aspectRatio);
-      const updatedImages = [...newImagesData, ...images];
-      onUpdateImages(updatedImages);
+      if (newImagesData.length > 0) {
+          newImagesData.sort((a, b) => b.aspectRatio - a.aspectRatio);
+          const updatedImages = [...newImagesData, ...images];
+          onUpdateImages(updatedImages);
+      }
+      
+      if (hasError && newImagesData.length === 0) {
+         // Only show popup if NO images succeeded (likely RLS error)
+         if (window.confirm(`Failed to upload images. Ensure your bucket is Public and has policies.\n\nOpen Dashboard Instructions?`)) {
+              window.open(SUPABASE_STORAGE_URL, '_blank');
+         }
+      }
       
     } catch (error: any) {
-      console.error('Upload error:', error);
-      
-      let msg = "Failed to upload image. Unknown error.";
-      if (error.message === "RLS_POLICY_ERROR") {
-          msg = "PERMISSION DENIED: You created the bucket, but you need to add a POLICY.\n\n1. Go to Supabase -> Storage -> Configuration\n2. Click 'New Policy' on the 'images' bucket\n3. Select 'For full customization'\n4. Check INSERT, SELECT, UPDATE\n5. Select 'Authenticated' and 'Anon' roles\n6. Save.";
-      } else if (error.message && error.message.includes("Bucket not found")) {
-          msg = "BUCKET MISSING: Please create a public bucket named 'images' in Supabase Storage.";
-      }
-
-      if (window.confirm(`${msg}\n\nOpen Dashboard to fix this?`)) {
-          window.open(SUPABASE_STORAGE_URL, '_blank');
-      }
+      console.error('Batch Upload error:', error);
     } finally {
       setIsUploading(false);
       e.target.value = '';
