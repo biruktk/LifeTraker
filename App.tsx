@@ -15,6 +15,10 @@ import { StorageService } from './services/storage';
 import { supabase } from './services/supabaseClient';
 
 // Add types for Web Speech API
+// Add types for Web Speech API
+// Add types for Web Speech API
+// Add types for Web Speech API
+// Add types for Web Speech API
 declare global {
   interface Window {
     webkitSpeechRecognition: any;
