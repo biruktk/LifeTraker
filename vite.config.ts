@@ -11,10 +11,10 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-      
+        
         'process.env.API_KEY': JSON.stringify(`AIzaSyCMTyu1XdmJwXjk0HQogQJzfJbi5MqcWik`),
-        'process.env.GEMINI_API_KEY': JSON.stringify(`AIzaSyCMTyu1XdmJwXjk0HQogQJzfJbi5MqcWik`)  
-            },
+        'process.env.GEMINI_API_KEY': JSON.stringify(`AIzaSyCMTyu1XdmJwXjk0HQogQJzfJbi5MqcWik`)
+      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

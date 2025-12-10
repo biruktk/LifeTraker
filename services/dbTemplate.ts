@@ -1,9 +1,11 @@
-export const DB_TEMPLATE = {
+import { AppData } from '../types';
+
+export const DB_TEMPLATE: { meta: any, users: any[], appDataTemplate: AppData } = {
   meta: {
     version: "1.0",
     appName: "Life Tracker"
   },
-  users: [] as any[],
+  users: [],
   appDataTemplate: {
     goals: {
       main: "Build my Empire",
@@ -27,6 +29,8 @@ export const DB_TEMPLATE = {
       { id: "h1", name: "Read 10 pages", logs: {} }
     ],
     journal: [],
-    expenses: []
+    expenses: [],
+    visionBoard: [],
+    savedChat: []
   }
 };

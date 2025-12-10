@@ -1,105 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
-
-interface VisionImage {
-  id: number;
-  src: string;
-  area: number;
-  aspectRatio: number; // width / height
-}
+import { VisionImage } from '../types';
+import { uploadFile, dataURLtoBlob } from '../services/imageService';
+import { SUPABASE_STORAGE_URL } from '../services/supabaseClient';
 
 interface VisionBoardProps {
   userId: string;
+  images: VisionImage[];
+  onUpdateImages: (images: VisionImage[]) => void;
 }
 
-// IndexedDB Utilities
-const DB_NAME = 'LifeTrackerDB';
-const STORE_NAME = 'boards';
-
-const initDB = (): Promise<IDBDatabase> => {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, 1);
-        request.onupgradeneeded = (event) => {
-            const db = (event.target as IDBOpenDBRequest).result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
-        };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
-};
-
-const saveToDB = async (userId: string, images: VisionImage[]) => {
-    try {
-        const db = await initDB();
-        return new Promise<void>((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readwrite');
-            const store = tx.objectStore(STORE_NAME);
-            const req = store.put(images, userId);
-            req.onsuccess = () => resolve();
-            req.onerror = () => reject(req.error);
-        });
-    } catch (e) {
-        console.error("Failed to save to DB", e);
-        // Fallback to localStorage if IDB fails? likely quota will fail there too.
-        // Alert user critical error.
-        alert("Failed to save images. Database error.");
-    }
-};
-
-const loadFromDB = async (userId: string): Promise<VisionImage[] | null> => {
-    try {
-        const db = await initDB();
-        return new Promise((resolve, reject) => {
-            const tx = db.transaction(STORE_NAME, 'readonly');
-            const store = tx.objectStore(STORE_NAME);
-            const req = store.get(userId);
-            req.onsuccess = () => resolve(req.result ? req.result : null);
-            req.onerror = () => reject(req.error);
-        });
-    } catch (e) {
-        console.error("Failed to load from DB", e);
-        return null;
-    }
-};
-
-const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
-  const [images, setImages] = useState<VisionImage[]>([]);
+const VisionBoard: React.FC<VisionBoardProps> = ({ userId, images = [], onUpdateImages }) => {
   const [editMode, setEditMode] = useState(false);
   const [selectedImages, setSelectedImages] = useState<Set<number>>(new Set());
-  const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isUploading, setIsUploading] = useState(false);
-
-  // Load images on mount (Migrate from LS if needed)
-  useEffect(() => {
-    const loadImages = async () => {
-        // 1. Try Load from IDB
-        const dbImages = await loadFromDB(userId);
-        
-        if (dbImages) {
-            setImages(dbImages);
-        } else {
-            // 2. Fallback / Migration from LocalStorage
-            const lsKey = `vision_board_images_${userId}`;
-            const savedLS = localStorage.getItem(lsKey);
-            if (savedLS) {
-                try {
-                    const parsed = JSON.parse(savedLS);
-                    setImages(parsed);
-                    // Migrate to IDB
-                    await saveToDB(userId, parsed);
-                    // Clear LS to free space
-                    localStorage.removeItem(lsKey);
-                } catch (e) {
-                    console.error('Error loading legacy vision board:', e);
-                }
-            }
-        }
-    };
-    loadImages();
-  }, [userId]);
 
   // Handle Fullscreen Change Events
   useEffect(() => {
@@ -110,24 +26,37 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
       return () => document.removeEventListener('fullscreenchange', handleFullScreenChange);
   }, []);
 
-  // Save images
-  const saveImages = async (newImages: VisionImage[]) => {
-    setImages(newImages);
-    await saveToDB(userId, newImages);
+  // --- LIGHTBOX NAVIGATION LOGIC ---
+  const handleNext = () => {
+      setLightboxIndex(prev => (prev !== null ? (prev + 1) % images.length : null));
   };
 
-  const compressImage = (src: string, maxWidth = 1600): Promise<{ src: string; area: number; aspectRatio: number }> => {
+  const handlePrev = () => {
+      setLightboxIndex(prev => (prev !== null ? (prev - 1 + images.length) % images.length : null));
+  };
+
+  // Keyboard Navigation
+  useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+          if (lightboxIndex === null) return;
+          if (e.key === 'ArrowRight') handleNext();
+          if (e.key === 'ArrowLeft') handlePrev();
+          if (e.key === 'Escape') setLightboxIndex(null);
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxIndex, images]);
+
+  // Client-side compression before upload
+  const compressImage = (src: string, maxWidth = 1280): Promise<{ src: string; area: number; aspectRatio: number }> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = function () {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
-
-        // Calculate aspect ratio
         const aspectRatio = width / height;
 
-        // Resize logic - Keep High Quality for Unlimited feel
         if (width > maxWidth) {
           height = (height * maxWidth) / width;
           width = maxWidth;
@@ -138,8 +67,7 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.drawImage(img, 0, 0, width, height);
-            // 0.85 quality for better looking images since we have "unlimited" space
-            const compressed = canvas.toDataURL('image/jpeg', 0.85); 
+            const compressed = canvas.toDataURL('image/jpeg', 0.8); 
             resolve({
                 src: compressed,
                 area: width * height,
@@ -159,35 +87,50 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
     const newImagesData: VisionImage[] = [];
 
     try {
-      // Process all files
       for (const file of files) {
         if (file.type.startsWith('image/')) {
+          // 1. Read file
           const reader = new FileReader();
           const dataUrl = await new Promise<string>((resolve) => {
             reader.onload = (event) => resolve(event.target?.result as string);
             reader.readAsDataURL(file);
           });
 
+          // 2. Compress locally
           const compressed = await compressImage(dataUrl);
+
+          // 3. Convert to Blob for Upload
+          const blob = dataURLtoBlob(compressed.src);
+
+          // 4. Upload to Supabase Storage (The "Folder")
+          const publicUrl = await uploadFile(blob, userId);
+
           newImagesData.push({
-            id: Date.now() + Math.random(), // Ensure unique ID even in fast loops
-            src: compressed.src,
+            id: Date.now() + Math.random(),
+            src: publicUrl, // Save URL, not base64
             area: compressed.area,
             aspectRatio: compressed.aspectRatio
           });
         }
       }
 
-      // Sort ONLY the new batch by aspect ratio (Widest first)
       newImagesData.sort((a, b) => b.aspectRatio - a.aspectRatio);
-      
-      // Add new images to the top of the list
       const updatedImages = [...newImagesData, ...images];
-      await saveImages(updatedImages);
+      onUpdateImages(updatedImages);
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Upload error:', error);
-      alert('An error occurred during upload. Please try again.');
+      
+      let msg = "Failed to upload image. Unknown error.";
+      if (error.message === "RLS_POLICY_ERROR") {
+          msg = "PERMISSION DENIED: You created the bucket, but you need to add a POLICY.\n\n1. Go to Supabase -> Storage -> Configuration\n2. Click 'New Policy' on the 'images' bucket\n3. Select 'For full customization'\n4. Check INSERT, SELECT, UPDATE\n5. Select 'Authenticated' and 'Anon' roles\n6. Save.";
+      } else if (error.message && error.message.includes("Bucket not found")) {
+          msg = "BUCKET MISSING: Please create a public bucket named 'images' in Supabase Storage.";
+      }
+
+      if (window.confirm(`${msg}\n\nOpen Dashboard to fix this?`)) {
+          window.open(SUPABASE_STORAGE_URL, '_blank');
+      }
     } finally {
       setIsUploading(false);
       e.target.value = '';
@@ -205,23 +148,20 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
   };
 
   const moveImage = (index: number, direction: 'UP' | 'DOWN', e: React.MouseEvent) => {
-      e.stopPropagation(); // Prevent opening/selecting
+      e.stopPropagation();
       const newImages = [...images];
-      
       if (direction === 'UP' && index > 0) {
-          // Swap with previous
           [newImages[index], newImages[index - 1]] = [newImages[index - 1], newImages[index]];
       } else if (direction === 'DOWN' && index < newImages.length - 1) {
-          // Swap with next
           [newImages[index], newImages[index + 1]] = [newImages[index + 1], newImages[index]];
       }
-      saveImages(newImages);
+      onUpdateImages(newImages);
   };
 
   const deleteSelected = () => {
     if (window.confirm(`Delete ${selectedImages.size} image(s)?`)) {
       const remainingImages = images.filter((img) => !selectedImages.has(img.id));
-      saveImages(remainingImages);
+      onUpdateImages(remainingImages);
       setEditMode(false);
       setSelectedImages(new Set());
     }
@@ -251,7 +191,6 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
         ref={containerRef} 
         className={`min-h-screen w-full relative pb-32 animate-fade-in transition-colors duration-500 ${isFullscreen ? 'bg-black p-4 md:p-8 overflow-y-auto' : ''}`}
     >
-      {/* Header - Hidden in Fullscreen */}
       {!isFullscreen && (
           <div className="mb-8 flex justify-between items-start">
               <div>
@@ -259,65 +198,40 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
                 <p className="text-emerald-400/60">Visualize your dreams and goals.</p>
               </div>
               <div className="flex gap-2">
-                  <button 
-                    onClick={toggleAppFullscreen}
-                    className="p-3 rounded-xl bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500 hover:text-white transition-all shadow-lg border border-emerald-500/20"
-                    title="Enter Fullscreen"
-                  >
+                  <button onClick={toggleAppFullscreen} className="p-3 rounded-xl bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500 hover:text-white transition-all shadow-lg border border-emerald-500/20" title="Enter Fullscreen">
                      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
                   </button>
               </div>
           </div>
       )}
 
-      {/* Fullscreen Floating Exit Button */}
       {isFullscreen && (
-          <button 
-            onClick={toggleAppFullscreen}
-            className="fixed top-6 right-6 z-50 p-3 rounded-full bg-black/50 hover:bg-white/20 text-white/50 hover:text-white transition-all backdrop-blur-sm border border-white/10"
-            title="Exit Fullscreen"
-          >
+          <button onClick={toggleAppFullscreen} className="fixed top-6 right-6 z-50 p-3 rounded-full bg-black/50 hover:bg-white/20 text-white/50 hover:text-white transition-all backdrop-blur-sm border border-white/10" title="Exit Fullscreen">
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
       )}
 
-      {/* Masonry Grid */}
       <div className={`columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-4 ${isFullscreen ? 'mx-auto max-w-[1800px]' : ''}`}>
         {images.map((img, index) => (
           <div
             key={img.id}
             className={`break-inside-avoid relative group cursor-pointer rounded-xl overflow-hidden shadow-lg hover:shadow-emerald-500/20 transition-all duration-300 ${!editMode ? 'hover:scale-[1.02]' : ''} bg-black/20`}
-            onClick={() => editMode ? toggleSelection(img.id) : setFullscreenImage(img.src)}
+            onClick={() => editMode ? toggleSelection(img.id) : setLightboxIndex(index)}
           >
             <img src={img.src} alt="Vision" className="w-full h-auto object-cover block" />
-            
-            {/* Edit Mode Overlay */}
             {editMode && (
                 <div className={`absolute inset-0 bg-black/40 backdrop-blur-[2px] flex flex-col justify-between p-3 transition-colors ${selectedImages.has(img.id) ? 'bg-emerald-500/20 backdrop-blur-none' : ''}`}>
-                    {/* Selection Checkbox */}
                     <div className="flex justify-between items-start">
                         <div className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${selectedImages.has(img.id) ? 'bg-emerald-500 border-emerald-500' : 'bg-white/10 border-white/80 hover:bg-white/20'}`}>
                             {selectedImages.has(img.id) && <span className="text-white font-bold text-sm">✓</span>}
                         </div>
                     </div>
-
-                    {/* Reordering Controls */}
                     <div className="flex justify-center gap-2 items-center" onClick={(e) => e.stopPropagation()}>
-                        <button 
-                            onClick={(e) => moveImage(index, 'UP', e)}
-                            disabled={index === 0}
-                            className="p-2 rounded-full bg-white/10 hover:bg-white/30 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                            title="Move Backward"
-                        >
+                        <button onClick={(e) => moveImage(index, 'UP', e)} disabled={index === 0} className="p-2 rounded-full bg-white/10 hover:bg-white/30 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                         </button>
                         <span className="text-xs font-mono text-white/50">{index + 1}</span>
-                        <button 
-                            onClick={(e) => moveImage(index, 'DOWN', e)}
-                            disabled={index === images.length - 1}
-                            className="p-2 rounded-full bg-white/10 hover:bg-white/30 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                            title="Move Forward"
-                        >
+                        <button onClick={(e) => moveImage(index, 'DOWN', e)} disabled={index === images.length - 1} className="p-2 rounded-full bg-white/10 hover:bg-white/30 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-all">
                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
                         </button>
                     </div>
@@ -327,11 +241,10 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
         ))}
       </div>
       
-      {/* Loading State */}
       {isUploading && (
           <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm">
               <div className="w-16 h-16 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-              <p className="text-emerald-400 font-bold text-xl animate-pulse">Uploading to Cloud...</p>
+              <p className="text-emerald-400 font-bold text-xl animate-pulse">Uploading to Cloud Folder...</p>
           </div>
       )}
 
@@ -339,75 +252,35 @@ const VisionBoard: React.FC<VisionBoardProps> = ({ userId }) => {
           <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-emerald-500/20 rounded-3xl bg-black/10 text-emerald-500/40">
               <span className="text-6xl mb-4">🖼️</span>
               <p>Your vision board is empty.</p>
-              <p className="text-sm">Upload images to start visualizing.</p>
           </div>
       )}
 
-      {/* Bottom Bar - Hidden in Fullscreen */}
       {!isFullscreen && (
           <div className="fixed bottom-0 left-0 right-0 md:left-64 bg-emerald-950/90 backdrop-blur-xl border-t border-emerald-500/20 p-4 z-40 flex justify-center gap-3 flex-wrap shadow-[0_-5px_20px_rgba(0,0,0,0.4)]">
             {!editMode ? (
               <>
-                <button
-                  onClick={() => setEditMode(true)}
-                  className="bg-orange-600/90 hover:bg-orange-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all"
-                >
-                  ✏️ Edit / Move
-                </button>
+                <button onClick={() => setEditMode(true)} className="bg-orange-600/90 hover:bg-orange-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all">✏️ Edit</button>
                 <label className="cursor-pointer bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all flex items-center gap-2">
-                  <span>📷 Add Images</span>
-                  <input
-                    type="file"
-                    multiple
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleFileUpload}
-                  />
+                  <span>📷 Upload</span>
+                  <input type="file" multiple accept="image/*" className="hidden" onChange={handleFileUpload} />
                 </label>
               </>
             ) : (
               <>
-                <button
-                  onClick={deleteSelected}
-                  className={`bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all ${selectedImages.size === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  disabled={selectedImages.size === 0}
-                >
-                  🗑️ Delete ({selectedImages.size})
-                </button>
-                <button
-                  onClick={selectAll}
-                  className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all"
-                >
-                  {selectedImages.size === images.length && images.length > 0 ? '◻️ Deselect All' : '☑️ Select All'}
-                </button>
-                <button
-                  onClick={() => { setEditMode(false); setSelectedImages(new Set()); }}
-                  className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all"
-                >
-                  ✖️ Done
-                </button>
+                <button onClick={deleteSelected} className="bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all" disabled={selectedImages.size === 0}>🗑️ Delete</button>
+                <button onClick={selectAll} className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all">Select All</button>
+                <button onClick={() => { setEditMode(false); setSelectedImages(new Set()); }} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-xl shadow-lg transition-all">✖️ Done</button>
               </>
             )}
           </div>
       )}
 
-      {/* Single Image Lightbox Overlay */}
-      {fullscreenImage && (
-        <div 
-            className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4"
-            onClick={() => setFullscreenImage(null)}
-        >
-          <button
-            className="absolute top-4 right-4 text-white/70 hover:text-white bg-white/10 rounded-full w-10 h-10 flex items-center justify-center text-2xl transition-colors"
-            onClick={() => setFullscreenImage(null)}
-          >
-            ×
-          </button>
-          <img
-            src={fullscreenImage}
-            alt="Fullscreen"
-            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-          />
+      {lightboxIndex !== null && images[lightboxIndex] && (
+        <div className="fixed inset-0 z-[60] bg-black/95 flex items-center justify-center p-4 backdrop-blur-md" onClick={() => setLightboxIndex(null)}>
+          <button className="absolute top-4 right-4 text-white/70 hover:text-white bg-white/10 rounded-full w-10 h-10 flex items-center justify-center text-2xl transition-colors z-50">×</button>
+          <button className="absolute left-4 top-1/2 -translate-y-1/2 text-white/50 hover:text-white bg-black/50 hover:bg-black/80 rounded-full w-12 h-12 flex items-center justify-center z-50 hidden md:flex" onClick={(e) => { e.stopPropagation(); handlePrev(); }}>←</button>
+          <button className="absolute right-4 top-1/2 -translate-y-1/2 text-white/50 hover:text-white bg-black/50 hover:bg-black/80 rounded-full w-12 h-12 flex items-center justify-center z-50 hidden md:flex" onClick={(e) => { e.stopPropagation(); handleNext(); }}>→</button>
+          <img src={images[lightboxIndex].src} alt="Fullscreen" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl animate-fade-in select-none" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </div>

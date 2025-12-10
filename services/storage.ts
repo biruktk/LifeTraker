@@ -1,91 +1,144 @@
+import { supabase } from './supabaseClient';
 import { DB_TEMPLATE } from './dbTemplate';
 import { AppData } from '../types';
 
-const DB_KEY = 'life_tracker_db_v1';
-const SESSION_KEY = 'life_tracker_session';
-
-// --- INTERFACE FOR THE JSON FILE ---
-
 export const StorageService = {
-    // Initialize the DB from the template if empty
-    init: () => {
-        if (!localStorage.getItem(DB_KEY)) {
-            localStorage.setItem(DB_KEY, JSON.stringify(DB_TEMPLATE));
-        }
+    // --- AUTHENTICATION ---
+    
+    // Check if user is logged in currently
+    getSession: async () => {
+        const { data: { session } } = await supabase.auth.getSession();
+        return session;
     },
 
-    // Get the full database
-    getDB: () => {
-        try {
-            const db = localStorage.getItem(DB_KEY);
-            return db ? JSON.parse(db) : DB_TEMPLATE;
-        } catch (e) {
-            return DB_TEMPLATE;
-        }
-    },
-
-    // Save the full database
-    saveDB: (data: any) => {
-        localStorage.setItem(DB_KEY, JSON.stringify(data));
-    },
-
-    // User Management
-    getUsers: () => {
-        const db = StorageService.getDB();
-        return db.users || [];
-    },
-
-    addUser: (user: any) => {
-        const db = StorageService.getDB();
-        const users = db.users || [];
-        if (users.find((u: any) => u.email === user.email)) {
-            throw new Error('User already exists');
-        }
-        users.push(user);
+    // Sign Up
+    signUp: async (email: string, pass: string, name: string) => {
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password: pass,
+            options: {
+                data: { name } // Store name in metadata
+            }
+        });
+        if (error) throw error;
         
-        // Create initial data slot for this user
-        db[`data_${user.id}`] = { 
+        // If signup successful, initialize their DB entry
+        if (data.user) {
+            const initialData = { 
+                ...DB_TEMPLATE.appDataTemplate, 
+                user: { name } 
+            };
+            await StorageService.saveUserData(initialData);
+        }
+        
+        return data;
+    },
+
+    // Log In
+    login: async (email: string, pass: string) => {
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password: pass
+        });
+        if (error) throw error;
+        return data;
+    },
+
+    // Log Out
+    logout: async () => {
+        await supabase.auth.signOut();
+    },
+
+    // --- DATA MANAGEMENT ---
+
+    // Load ALL user data from Supabase table
+    getUserData: async (): Promise<AppData | null> => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return null;
+
+        const { data, error } = await supabase
+            .from('user_data')
+            .select('content')
+            .eq('id', user.id)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "Row not found" (new user)
+            console.error("Error loading data:", error);
+            return null;
+        }
+
+        if (data && data.content) {
+            return data.content as AppData;
+        }
+
+        // Return template if new user
+        return { 
             ...DB_TEMPLATE.appDataTemplate, 
-            user: { name: user.name } 
+            user: { name: user.user_metadata.name || 'User' } 
         };
-        
-        StorageService.saveDB(db);
-        return user;
     },
 
-    loginUser: (email: string, pass: string) => {
-        const users = StorageService.getUsers();
-        const user = users.find((u: any) => u.email === email && u.password === pass);
-        if (user) {
-            localStorage.setItem(SESSION_KEY, JSON.stringify(user));
-            return user;
+    // Save ALL user data to Supabase table
+    saveUserData: async (data: AppData) => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // Simple size check
+        try {
+            const payloadString = JSON.stringify(data);
+            const sizeInMB = payloadString.length / 1024 / 1024;
+            if (sizeInMB > 10) {
+                console.warn(`⚠️ Warning: Data size is ${sizeInMB.toFixed(2)}MB. This might be too large for rapid syncing.`);
+            }
+        } catch(e) {}
+
+        const { error } = await supabase
+            .from('user_data')
+            .upsert({ 
+                id: user.id, 
+                content: data,
+                updated_at: new Date().toISOString()
+            });
+
+        if (error) {
+            console.error("Error saving data:", error);
+            throw error; // Propagate error so UI shows "Error"
         }
-        return null;
     },
 
-    logout: () => {
-        localStorage.removeItem(SESSION_KEY);
+    // --- IMPORT / EXPORT ---
+    exportDatabase: async () => {
+        const data = await StorageService.getUserData();
+        if (!data) return;
+        
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `life_tracker_backup_${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     },
 
-    getSession: () => {
-        const sess = localStorage.getItem(SESSION_KEY);
-        return sess ? JSON.parse(sess) : null;
-    },
-
-    // Data Management
-    getUserData: (userId: string): AppData => {
-        const db = StorageService.getDB();
-        const data = db[`data_${userId}`];
-        // Fallback if user data is missing but user exists
-        return data || { ...DB_TEMPLATE.appDataTemplate, user: { name: 'User' } };
-    },
-
-    saveUserData: (userId: string, data: AppData) => {
-        const db = StorageService.getDB();
-        db[`data_${userId}`] = data;
-        StorageService.saveDB(db);
+    importDatabase: async (file: File) => {
+        return new Promise<void>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const json = JSON.parse(e.target?.result as string);
+                    // Basic validation
+                    if (!json.user || !json.goals) throw new Error("Invalid structure");
+                    
+                    await StorageService.saveUserData(json);
+                    resolve();
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsText(file);
+        });
     }
 };
-
-// Initialize immediately
-StorageService.init();

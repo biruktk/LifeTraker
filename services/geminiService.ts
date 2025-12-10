@@ -1,9 +1,18 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { AppData, Priority } from '../types';
 
-// Initialize with support for both standard process.env (Node/Webpack) and import.meta.env (Vite)
-// This makes it easier to run locally without complex config changes.
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY || "";
+// Safely retrieve API Key checking multiple environment variable standards
+const getApiKey = () => {
+  if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+    return process.env.API_KEY;
+  }
+  if ((import.meta as any).env && (import.meta as any).env.VITE_API_KEY) {
+    return (import.meta as any).env.VITE_API_KEY;
+  }
+  return "";
+};
+
+const apiKey = getApiKey();
 const ai = new GoogleGenAI({ apiKey });
 
 interface ChatResponse {

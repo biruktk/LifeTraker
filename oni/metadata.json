@@ -1,7 +1,0 @@
-{
-  "name": "Life Tracker - Productivity & Management",
-  "description": "A multi-functional life management application featuring task tracking, habits, journaling, expenses, and AI assistance with a green glassmorphism design.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}

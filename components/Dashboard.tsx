@@ -5,9 +5,12 @@ interface DashboardProps {
   data: AppData;
   selectedDate: string;
   onSelectDate: (date: string) => void;
+  onDeleteTodo: (id: string) => void;
+  onDeleteHabit: (id: string) => void;
+  onDeleteNonNegotiable: (id: string) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ data, selectedDate, onSelectDate }) => {
+const Dashboard: React.FC<DashboardProps> = ({ data, selectedDate, onSelectDate, onDeleteTodo, onDeleteHabit, onDeleteNonNegotiable }) => {
   const [showWeeklyGoal, setShowWeeklyGoal] = useState(false);
   const today = new Date();
   const year = today.getFullYear();

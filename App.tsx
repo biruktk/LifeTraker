@@ -8,9 +8,10 @@ import VisionBoard from './components/VisionBoard';
 import SimpleChat from './components/SimpleChat';
 import SocialMediaManager from './components/SocialMediaManager';
 import Timeline from './components/Timeline';
-import { AppData, Todo, Habit, JournalEntry, Expense, SocialPost } from './types';
+import { AppData, Todo, Habit, JournalEntry, Expense, SocialPost, VisionImage, SavedMessage } from './types';
 import { chatWithAI } from './services/geminiService';
 import { StorageService } from './services/storage';
+import { supabase } from './services/supabaseClient';
 
 // Add types for Web Speech API
 declare global {
@@ -23,8 +24,11 @@ declare global {
 type ViewState = 'VISION' | 'DASHBOARD' | 'CHAT' | 'SOCIAL' | 'TIMELINE';
 
 const App: React.FC = () => {
-  const [currentUser, setCurrentUser] = useState<{ id: string, name: string, email: string } | null>(null);
+  const [session, setSession] = useState<any>(null);
   const [data, setData] = useState<AppData | null>(null);
+  const [loadingData, setLoadingData] = useState(true);
+  const [syncStatus, setSyncStatus] = useState<'SAVED' | 'SAVING' | 'ERROR'>('SAVED');
+  
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [modalConfig, setModalConfig] = useState<{isOpen: boolean, type: 'TODO'|'HABIT'|'EXPENSE'|'NON_NEGOTIABLE'|'GOAL'|'MILESTONE'}>({ isOpen: false, type: 'TODO' });
   const [isJournalModalOpen, setIsJournalModalOpen] = useState(false);
@@ -39,44 +43,66 @@ const App: React.FC = () => {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
-
-  // Voice Interaction State
   const [isListening, setIsListening] = useState(false);
-  const recognitionRef = useRef<any>(null);
 
-  // 1. INITIAL LOAD (Auth & Data)
+  // 1. INITIAL LOAD (Supabase Auth & Data)
   useEffect(() => {
-    const session = StorageService.getSession();
-    if (session) {
-      setCurrentUser(session);
-      const userData = StorageService.getUserData(session.id);
-      setData(userData);
-    }
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) fetchUserData();
+      else setLoadingData(false);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) {
+          fetchUserData();
+      } else {
+          setData(null);
+          setLoadingData(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
-  // 2. AUTO-SAVE TO DB.JSON (Virtual)
-  useEffect(() => {
-    if (currentUser && data) {
-        StorageService.saveUserData(currentUser.id, data);
-    }
-  }, [data, currentUser]);
-
-  const handleLogin = (user: { id: string; name: string; email: string }) => {
-    setCurrentUser(user);
-    const userData = StorageService.getUserData(user.id);
-    setData(userData);
-    setCurrentView('VISION'); 
+  const fetchUserData = async () => {
+      setLoadingData(true);
+      const cloudData = await StorageService.getUserData();
+      if (cloudData) {
+          // Migration: Ensure new fields exist if loading old data
+          if (!cloudData.visionBoard) cloudData.visionBoard = [];
+          if (!cloudData.savedChat) cloudData.savedChat = [];
+          setData(cloudData);
+      }
+      setLoadingData(false);
   };
+
+  // 2. AUTO-SAVE (Debounced)
+  useEffect(() => {
+    if (session && data) {
+        setSyncStatus('SAVING');
+        const timeoutId = setTimeout(() => {
+            console.log("Auto-saving to Supabase...");
+            StorageService.saveUserData(data)
+                .then(() => setSyncStatus('SAVED'))
+                .catch(() => setSyncStatus('ERROR'));
+        }, 1500); // 1.5s debounce
+        return () => clearTimeout(timeoutId);
+    }
+  }, [data, session]);
+
 
   const handleLogout = () => {
     StorageService.logout();
-    setCurrentUser(null);
+    setSession(null);
     setData(null);
   };
 
   const updateData = (newData: AppData) => {
     setData(newData);
-    // Auto-save happens in useEffect
   };
 
   // --- HANDLERS ---
@@ -117,10 +143,28 @@ const App: React.FC = () => {
       updateData({ ...data, socialQueue: newQueue });
   };
 
+  const updateVisionBoard = (newImages: VisionImage[]) => {
+      if (!data) return;
+      updateData({ ...data, visionBoard: newImages });
+  };
+
+  const updateSavedChat = (newMessages: SavedMessage[]) => {
+      if (!data) return;
+      updateData({ ...data, savedChat: newMessages });
+  }
+
   const toggleTodo = (id: string) => {
     if (!data) return;
     const newTodos = data.todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
     updateData({ ...data, todos: newTodos });
+  };
+
+  const deleteTodo = (id: string) => {
+      if (!data) return;
+      if (window.confirm("Delete this task?")) {
+        const newTodos = data.todos.filter(t => t.id !== id);
+        updateData({ ...data, todos: newTodos });
+      }
   };
 
   const toggleHabit = (id: string) => {
@@ -138,6 +182,14 @@ const App: React.FC = () => {
       updateData({ ...data, habits: newHabits });
   };
 
+  const deleteHabit = (id: string) => {
+    if (!data) return;
+    if (window.confirm("Stop tracking this habit? History will be kept but it will be removed from list.")) {
+        const newHabits = data.habits.filter(h => h.id !== id);
+        updateData({ ...data, habits: newHabits });
+    }
+  };
+
   const toggleNonNegotiable = (id: string) => {
       if (!data) return;
       const currentLogs = data.nonNegotiableLogs[selectedDate] || [];
@@ -148,6 +200,14 @@ const App: React.FC = () => {
           newLogs = [...currentLogs, id];
       }
       updateData({ ...data, nonNegotiableLogs: { ...data.nonNegotiableLogs, [selectedDate]: newLogs } });
+  };
+
+  const deleteNonNegotiable = (id: string) => {
+    if (!data) return;
+    if (window.confirm("Remove this non-negotiable rule?")) {
+        const newNN = data.nonNegotiables.filter(nn => nn.id !== id);
+        updateData({ ...data, nonNegotiables: newNN });
+    }
   };
 
   const deleteExpense = (id: string) => {
@@ -196,20 +256,62 @@ const App: React.FC = () => {
       setChatLoading(false);
   };
 
-  if (!currentUser || !data) {
-    return <Auth onLogin={handleLogin} />;
+  const toggleListening = () => {
+      if (isListening) {
+          setIsListening(false);
+          return;
+      }
+
+      if (!('webkitSpeechRecognition' in window)) {
+          alert("Voice input is not supported in this browser.");
+          return;
+      }
+
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => setIsListening(true);
+      recognition.onend = () => setIsListening(false);
+      recognition.onerror = () => setIsListening(false);
+
+      recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript;
+          setChatInput(transcript);
+      };
+
+      recognition.start();
+  };
+
+  if (!session) {
+    return <Auth onLogin={() => {}} />;
+  }
+
+  if (loadingData || !data) {
+      return (
+          <div className="min-h-screen bg-emerald-950 flex items-center justify-center">
+              <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+      );
   }
 
   return (
     <Layout 
-      user={currentUser} 
+      user={data.user} 
       onLogout={handleLogout} 
-      onSync={() => alert("Data is saved locally in db.json (Virtual).")}
       currentTab={currentView}
       onTabChange={setCurrentView}
+      syncStatus={syncStatus}
     >
         {/* VIEW ROUTING */}
-        {currentView === 'VISION' && <VisionBoard userId={currentUser.id} />}
+        {currentView === 'VISION' && (
+            <VisionBoard 
+                userId={session.user.id}
+                images={data.visionBoard}
+                onUpdateImages={updateVisionBoard} 
+            />
+        )}
         
         {currentView === 'TIMELINE' && (
             <Timeline 
@@ -224,10 +326,17 @@ const App: React.FC = () => {
             <SocialMediaManager 
                 queue={data.socialQueue}
                 onUpdateQueue={updateSocialQueue}
+                userId={session.user.id}
             />
         )}
 
-        {currentView === 'CHAT' && <SimpleChat userId={currentUser.id} />}
+        {currentView === 'CHAT' && (
+            <SimpleChat 
+                userId={session.user.id}
+                messages={data.savedChat}
+                onUpdateMessages={updateSavedChat}
+            />
+        )}
 
         {currentView === 'DASHBOARD' && (
             <div className="max-w-7xl mx-auto space-y-8 animate-fade-in pb-24">
@@ -235,7 +344,7 @@ const App: React.FC = () => {
                 {/* 1. Header & Goals */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
-                        <h1 className="text-4xl font-bold text-white mb-1">Good Morning, {currentUser.name}</h1>
+                        <h1 className="text-4xl font-bold text-white mb-1">Good Morning, {data.user.name}</h1>
                         <p className="text-emerald-400">Let's make today count.</p>
                     </div>
                     <button 
@@ -254,6 +363,9 @@ const App: React.FC = () => {
                             data={data} 
                             selectedDate={selectedDate} 
                             onSelectDate={setSelectedDate} 
+                            onDeleteTodo={deleteTodo}
+                            onDeleteHabit={deleteHabit}
+                            onDeleteNonNegotiable={deleteNonNegotiable}
                         />
                         
                         {/* Non-Negotiables */}
@@ -268,13 +380,14 @@ const App: React.FC = () => {
                                      return (
                                          <div 
                                             key={nn.id} 
+                                            className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center gap-3 group relative overflow-hidden ${isDone ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-900/50' : 'bg-black/30 border-red-900/30 hover:border-red-500/50'}`}
                                             onClick={() => toggleNonNegotiable(nn.id)}
-                                            className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center gap-3 ${isDone ? 'bg-emerald-600 border-emerald-500 shadow-lg shadow-emerald-900/50' : 'bg-black/30 border-red-900/30 hover:border-red-500/50'}`}
                                          >
                                              <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isDone ? 'border-white bg-white/20' : 'border-emerald-500/30'}`}>
                                                  {isDone && <span className="text-white text-xs">✓</span>}
                                              </div>
-                                             <span className={`font-bold ${isDone ? 'text-white' : 'text-emerald-100/50'}`}>{nn.title}</span>
+                                             <span className={`font-bold flex-1 ${isDone ? 'text-white' : 'text-emerald-100/50'}`}>{nn.title}</span>
+                                             <button onClick={(e) => { e.stopPropagation(); deleteNonNegotiable(nn.id); }} className="text-emerald-500/30 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                                          </div>
                                      )
                                  })}
@@ -292,13 +405,18 @@ const App: React.FC = () => {
                                  {data.habits.map(h => {
                                      const isDone = !!h.logs[selectedDate];
                                      return (
-                                         <button 
-                                            key={h.id}
-                                            onClick={() => toggleHabit(h.id)}
-                                            className={`p-3 rounded-xl border text-sm font-bold transition-all ${isDone ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-black/20 border-emerald-500/10 text-emerald-500/50'}`}
-                                         >
-                                             {h.name}
-                                         </button>
+                                         <div key={h.id} className="relative group">
+                                             <button 
+                                                onClick={() => toggleHabit(h.id)}
+                                                className={`w-full p-3 rounded-xl border text-sm font-bold transition-all text-left ${isDone ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300' : 'bg-black/20 border-emerald-500/10 text-emerald-500/50'}`}
+                                             >
+                                                 {h.name}
+                                             </button>
+                                             <button 
+                                                onClick={(e) => { e.stopPropagation(); deleteHabit(h.id); }}
+                                                className="absolute -top-1 -right-1 bg-red-900 text-red-200 w-5 h-5 rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                                             >×</button>
+                                         </div>
                                      );
                                  })}
                              </div>
@@ -330,6 +448,7 @@ const App: React.FC = () => {
                                              {todo.completed && <span className="text-white text-xs">✓</span>}
                                          </button>
                                          <span className={`flex-1 font-bold text-lg ${todo.completed ? 'text-emerald-500/50 line-through' : 'text-white'}`}>{todo.title}</span>
+                                         <button onClick={() => deleteTodo(todo.id)} className="text-emerald-500/30 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                                      </div>
                                  ))}
                              </div>
@@ -339,7 +458,7 @@ const App: React.FC = () => {
                          <div className="space-y-3">
                              <p className="text-xs font-bold text-emerald-500/50 uppercase tracking-wider">To-Do List</p>
                              {data.todos.filter(t => t.date === selectedDate && t.priority !== 'TOP').map(todo => (
-                                 <div key={todo.id} className="bg-black/20 p-4 rounded-xl border border-emerald-500/10 flex items-center gap-4 hover:bg-black/30 transition-all">
+                                 <div key={todo.id} className="bg-black/20 p-4 rounded-xl border border-emerald-500/10 flex items-center gap-4 hover:bg-black/30 transition-all group">
                                      <button 
                                         onClick={() => toggleTodo(todo.id)}
                                         className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all ${todo.completed ? 'bg-emerald-600 border-emerald-600' : 'border-emerald-500/20 hover:border-emerald-500'}`}
@@ -354,6 +473,7 @@ const App: React.FC = () => {
                                      }`}>
                                          {todo.priority}
                                      </span>
+                                     <button onClick={() => deleteTodo(todo.id)} className="text-emerald-500/30 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity">×</button>
                                  </div>
                              ))}
                              {data.todos.filter(t => t.date === selectedDate).length === 0 && (
@@ -441,6 +561,7 @@ const App: React.FC = () => {
                     data={data}
                     existingEntry={data.journal.find(j => j.date === selectedDate)}
                     onSave={saveJournalEntry}
+                    userId={session.user.id}
                 />
 
                 {/* AI CHAT OVERLAY */}
@@ -461,12 +582,18 @@ const App: React.FC = () => {
                             {chatLoading && <div className="text-emerald-500/50 text-xs italic">Thinking...</div>}
                         </div>
                         <div className="p-3 bg-emerald-900/80 border-t border-emerald-500/20 flex gap-2">
+                            <button 
+                                onClick={toggleListening}
+                                className={`p-2 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'bg-emerald-900/50 text-emerald-300 hover:bg-emerald-700'}`}
+                            >
+                                🎙️
+                            </button>
                             <input 
                                 value={chatInput}
                                 onChange={(e) => setChatInput(e.target.value)}
                                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                                 className="flex-1 bg-black/30 border border-emerald-500/30 rounded-lg px-3 py-2 text-white text-sm outline-none focus:border-emerald-400"
-                                placeholder="Type or speak..."
+                                placeholder={isListening ? "Listening..." : "Type or speak..."}
                             />
                             <button onClick={handleSendMessage} className="bg-emerald-500 hover:bg-emerald-400 text-white p-2 rounded-lg">
                                 ➤

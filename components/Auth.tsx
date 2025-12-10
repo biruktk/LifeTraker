@@ -2,50 +2,46 @@ import React, { useState } from 'react';
 import { StorageService } from '../services/storage';
 
 interface AuthProps {
-  onLogin: (user: { id: string; name: string; email: string }) => void;
+  onLogin: () => void; // No arguments needed, App handles session state
 }
 
 const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
-  
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState('');
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
     setError('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setMsg('');
+    setLoading(true);
 
     try {
         if (isLogin) {
-            const user = StorageService.loginUser(formData.email, formData.password);
-            if (user) {
-                onLogin(user);
-            } else {
-                setError('Invalid email or password.');
-            }
+            await StorageService.login(formData.email, formData.password);
+            onLogin();
         } else {
-            if (!formData.name || !formData.email || !formData.password) {
-                setError('All fields are required');
+            if (!formData.name) {
+                setError("Name is required");
+                setLoading(false);
                 return;
             }
-            
-            const newUser = { 
-                id: crypto.randomUUID(), 
-                name: formData.name, 
-                email: formData.email, 
-                password: formData.password 
-            };
-            
-            StorageService.addUser(newUser);
-            StorageService.loginUser(formData.email, formData.password);
-            onLogin(newUser);
+            await StorageService.signUp(formData.email, formData.password, formData.name);
+            setMsg("Account created! You can now log in.");
+            setIsLogin(true); // Switch to login view
         }
     } catch (err: any) {
-        setError(err.message || "An error occurred");
+        console.error(err);
+        setError(err.message || "Authentication failed");
+    } finally {
+        setLoading(false);
     }
   };
 
@@ -53,14 +49,15 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     <div className="min-h-screen flex items-center justify-center p-4 bg-emerald-950 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-emerald-900 to-emerald-950">
       <div className="glass-card w-full max-w-md p-8 rounded-3xl border border-emerald-500/20 shadow-2xl animate-fade-in relative overflow-hidden">
         
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 mt-6">
             <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-teal-400 bg-clip-text text-transparent mb-2">Life Tracker</h1>
-            <p className="text-emerald-400/60">Productivity Operating System</p>
-            <p className="text-[10px] text-emerald-500/30 mt-2">v2.0 • Local Database Active</p>
+            <p className="text-emerald-400/60">Powered by Supabase</p>
         </div>
 
         <h2 className="text-xl font-bold text-white mb-6 text-center">{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
         
+        {msg && <div className="mb-4 p-3 bg-green-500/20 text-green-300 rounded-lg text-sm text-center font-bold">{msg}</div>}
+
         <form onSubmit={handleSubmit} className="space-y-4">
             {!isLogin && (
                 <div>
@@ -98,13 +95,17 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
 
             {error && <p className="text-red-400 text-sm text-center bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</p>}
 
-            <button type="submit" className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold shadow-lg shadow-emerald-600/20 hover:scale-[1.02] transition-all mt-4">
-                {isLogin ? 'Log In' : 'Sign Up'}
+            <button 
+                type="submit" 
+                disabled={loading}
+                className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold shadow-lg shadow-emerald-600/20 hover:scale-[1.02] transition-all mt-4 disabled:opacity-50"
+            >
+                {loading ? 'Processing...' : (isLogin ? 'Log In' : 'Sign Up')}
             </button>
         </form>
 
         <div className="mt-6 text-center">
-            <button onClick={() => { setIsLogin(!isLogin); setError(''); }} className="text-sm text-emerald-400 hover:text-white transition-colors">
+            <button onClick={() => { setIsLogin(!isLogin); setError(''); setMsg(''); }} className="text-sm text-emerald-400 hover:text-white transition-colors">
                 {isLogin ? "Don't have an account? Sign Up" : "Already have an account? Log In"}
             </button>
         </div>

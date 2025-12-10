@@ -1,3 +1,4 @@
+
 export type Priority = 'TOP' | 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface Todo {
@@ -27,6 +28,8 @@ export interface JournalEntry {
   highlights: string[];
   persons: string[];
   images: string[]; // Base64 strings
+  location?: string;
+  weather?: string;
 }
 
 export interface Expense {
@@ -54,6 +57,22 @@ export interface SocialPost {
   status: 'QUEUED' | 'PUBLISHED' | 'SENT';
 }
 
+// Moved from VisionBoard.tsx
+export interface VisionImage {
+  id: number;
+  src: string;
+  area: number;
+  aspectRatio: number; 
+}
+
+// Moved from SimpleChat.tsx
+export interface SavedMessage {
+  id: string;
+  text: string;
+  image?: string;
+  timestamp: string;
+}
+
 export interface AppData {
   goals: {
     main: string;
@@ -71,4 +90,7 @@ export interface AppData {
     name: string;
     profileImage?: string;
   };
+  // NEW: Sync these to cloud
+  visionBoard: VisionImage[];
+  savedChat: SavedMessage[];
 }
